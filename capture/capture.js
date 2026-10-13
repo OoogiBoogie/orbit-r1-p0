@@ -1,8 +1,14 @@
 /* r1 capture check (local only). Takes ONE photo or records ONE 3-second clip when the person asks, shows it on this
  * screen, and throws it away. Nothing is sent (CSP connect-src 'none') and nothing is stored (no storage API is used).
- * The camera and microphone are on only while a capture is happening, and stop as soon as it is done, on Discard,
- * on Back, and when the page is hidden. Controls: the r1 SDK's own events (scrollUp, scrollDown, sideClick,
- * longPressStart, longPressEnd); on a desktop, arrow keys / Space / Enter / Shift dispatch the same events. */
+ *
+ * Lifecycle (fix for Codex 4778d791, the late-camera privacy race): every capture runs in a numbered generation.
+ * Hide, pagehide, Back/home, Discard, Close and starting another capture INVALIDATE the generation: they stop every
+ * track, stop the recorder and the level meter, and revoke every object URL. Anything that arrives afterwards (a late
+ * permission answer, a late frame encode, a late recorder stop) checks its generation and the page's visibility first;
+ * a late stream is stopped BEFORE it is assigned or played, and no late result creates media, UI or an object URL.
+ *
+ * Controls: the r1 SDK's own events (scrollUp, scrollDown, sideClick, longPressStart, longPressEnd); on a desktop,
+ * arrow keys / Space / Enter / Shift dispatch the same events. */
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
@@ -10,15 +16,23 @@
   const SDK = ['scrollUp', 'scrollDown', 'sideClick', 'longPressStart', 'longPressEnd'];
   const S = { screen: 'HOME', hi: 0, items: [], busy: false, facing: 'environment', stream: null, photo: null, clip: null,
     level: 0, peak: 0, note: '', seen: Object.fromEntries(SDK.map((e) => [e, 0])), log: [] };
+  const L = { gen: 0, raf: 0, ctx: null, rec: null }; // the lifecycle generation and what it owns
   const urls = new Set();
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const record = (what) => { S.log.push(new Date().toISOString().slice(11, 19) + ' ' + what); };
+  const current = (g) => g === L.gen && !document.hidden;
+  const stopStream = (st) => { try { st.getTracks().forEach((t) => t.stop()); } catch (e) { /* already gone */ } };
 
   function stopAll() {
-    if (S.stream) { S.stream.getTracks().forEach((t) => t.stop()); record('tracks stopped'); S.stream = null; }
+    if (S.stream) { stopStream(S.stream); record('tracks stopped'); S.stream = null; }
     live.srcObject = null;
   }
-  function discard() {
+  /** End the current generation: nothing started before this may show, play or keep anything afterwards. */
+  function invalidate(why) {
+    L.gen += 1;
+    if (L.raf) { cancelAnimationFrame(L.raf); L.raf = 0; }
+    if (L.ctx) { try { L.ctx.close(); } catch (e) { /* closed */ } L.ctx = null; }
+    if (L.rec) { try { if (L.rec.state !== 'inactive') L.rec.stop(); } catch (e) { /* stopped */ } L.rec = null; }
     stopAll();
     try { play.pause(); } catch (e) { /* not playing */ }
     play.removeAttribute('src');
@@ -26,7 +40,7 @@
     for (const u of urls) URL.revokeObjectURL(u);
     urls.clear();
     S.photo = null; S.clip = null; S.level = 0; S.peak = 0;
-    record('discarded');
+    record('invalidated (' + why + ')');
   }
   const liveTracks = () => (S.stream ? S.stream.getTracks().filter((t) => t.readyState === 'live').length : 0);
   const why = (err) => {
@@ -39,10 +53,14 @@
     if (n === 'NotSupportedError' || n === 'NotSupported') return 'This page can’t use the ' + (S.screen === 'MIC' ? 'microphone' : 'camera') + ' here (' + n + ').';
     return (n || 'Error') + ': ' + (err && err.message ? err.message : String(err));
   };
+  const askMedia = (constraints) => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.reject(Object.assign(new Error('getUserMedia is not available here'), { name: 'NotSupported' }));
+    return navigator.mediaDevices.getUserMedia(constraints);
+  };
 
   // ---------- screens ----------
-  function home() {
-    discard();
+  function home(why) {
+    invalidate(why || 'home');
     S.screen = 'HOME'; S.hi = 0;
     S.items = [
       { id: 'camera', label: 'Camera: take one photo', sub: 'Shown here, then thrown away' },
@@ -52,36 +70,44 @@
     if (window.closeWebView && typeof window.closeWebView.postMessage === 'function') S.items.push({ id: 'close', label: 'Close' });
   }
   async function camera() {
-    stopAll();
+    invalidate('camera start');
+    const g = L.gen;
     S.screen = 'CAMERA'; S.hi = 0; S.items = [{ id: 'wait', label: 'Starting the camera…', info: true }];
     paint();
+    let stream;
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('getUserMedia is not available here'), { name: 'NotSupported' });
-      S.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: S.facing }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
-      record('camera on (' + S.facing + ')');
-      live.srcObject = S.stream;
-      await live.play().catch(() => undefined);
-      const set = S.stream.getVideoTracks()[0].getSettings();
-      S.items = [
-        { id: 'take', label: 'Take the photo', sub: 'Camera: ' + (set.facingMode || 'unknown direction') + ' · ' + (set.width || '?') + '×' + (set.height || '?') },
-        { id: 'flip', label: 'Switch camera direction' },
-        { id: 'home', label: '‹ Back (camera off)' },
-      ];
+      stream = await askMedia({ video: { facingMode: { ideal: S.facing }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
     } catch (err) {
-      stopAll();
+      if (!current(g)) return; // the person already left; nothing to show
       S.items = [{ id: 'err', label: why(err), info: true }, { id: 'home', label: '‹ Back' }];
       record('camera refused: ' + (err && err.name));
+      return;
     }
+    if (!current(g)) { stopStream(stream); record('late camera stream stopped before use'); return; }
+    S.stream = stream;
+    record('camera on (' + S.facing + ')');
+    live.srcObject = stream;
+    await live.play().catch(() => undefined);
+    if (!current(g)) return; // invalidate() has already stopped it
+    const set = stream.getVideoTracks()[0].getSettings();
+    S.items = [
+      { id: 'take', label: 'Take the photo', sub: 'Camera: ' + (set.facingMode || 'unknown direction') + ' · ' + (set.width || '?') + '×' + (set.height || '?') },
+      { id: 'flip', label: 'Switch camera direction' },
+      { id: 'home', label: '‹ Back (camera off)' },
+    ];
   }
   async function take() {
-    if (!S.stream) return;
+    const g = L.gen;
+    if (!S.stream || !current(g)) return;
     const w = live.videoWidth; const h = live.videoHeight;
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     canvas.getContext('2d').drawImage(live, 0, 0, w, h);
     stopAll(); // the camera goes off as soon as the frame is taken
     const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
+    if (!current(g) || !blob) { record('late photo dropped'); return; }
     const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (!current(g)) { record('late photo dropped'); return; }
     const exif = hasExif(bytes);
     const url = URL.createObjectURL(blob); urls.add(url);
     shot.src = url;
@@ -103,7 +129,7 @@
     return false;
   }
   function micScreen() {
-    discard();
+    invalidate('mic screen');
     const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
     S.mime = window.MediaRecorder ? (types.find((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '') : null;
     S.screen = 'MIC'; S.hi = 0;
@@ -112,34 +138,52 @@
       : [{ id: 'rec', label: 'Record 3 seconds', sub: 'The mic is on only while recording' }, { id: 'home', label: '‹ Back' }];
   }
   async function rec() {
+    invalidate('mic start');
+    const g = L.gen;
     S.items = [{ id: 'wait', label: 'Recording… 3 s', info: true }]; S.busy = true; paint();
-    let ctx = null; let raf = 0;
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('getUserMedia is not available here'), { name: 'NotSupported' });
-      S.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      let stream;
+      try { stream = await askMedia({ audio: true, video: false }); }
+      catch (err) {
+        if (!current(g)) return;
+        S.items = [{ id: 'err', label: why(err), info: true }, { id: 'home', label: '‹ Back' }];
+        record('mic refused: ' + (err && err.name));
+        return;
+      }
+      if (!current(g)) { stopStream(stream); record('late mic stream stopped before use'); return; }
+      S.stream = stream;
       record('mic on');
       try {
-        ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const an = ctx.createAnalyser(); an.fftSize = 512;
-        ctx.createMediaStreamSource(S.stream).connect(an);
+        L.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const an = L.ctx.createAnalyser(); an.fftSize = 512;
+        L.ctx.createMediaStreamSource(stream).connect(an);
         const buf = new Uint8Array(an.fftSize);
-        const tick = () => { an.getByteTimeDomainData(buf); let m = 0; for (const v of buf) m = Math.max(m, Math.abs(v - 128)); S.level = Math.min(100, Math.round(m / 1.28)); S.peak = Math.max(S.peak, S.level); paintMeter(); raf = requestAnimationFrame(tick); };
+        const tick = () => {
+          if (!current(g)) return;
+          an.getByteTimeDomainData(buf); let m = 0; for (const v of buf) m = Math.max(m, Math.abs(v - 128));
+          S.level = Math.min(100, Math.round(m / 1.28)); S.peak = Math.max(S.peak, S.level); paintMeter();
+          L.raf = requestAnimationFrame(tick);
+        };
         tick();
-      } catch (e) { record('level meter unavailable: ' + e.name); }
+      } catch (e) { record('level meter unavailable: ' + (e && e.name)); }
       const chunks = [];
-      const mr = new MediaRecorder(S.stream, S.mime ? { mimeType: S.mime } : undefined);
-      mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-      const t0 = performance.now();
+      const mr = new MediaRecorder(stream, S.mime ? { mimeType: S.mime } : undefined);
+      L.rec = mr;
+      mr.ondataavailable = (e) => { if (current(g) && e.data && e.data.size) chunks.push(e.data); };
       const stopped = new Promise((res) => { mr.onstop = res; });
+      const t0 = performance.now();
       mr.start();
       await new Promise((res) => setTimeout(res, 3000));
-      mr.stop();
-      await stopped;
+      if (current(g) && mr.state !== 'inactive') mr.stop();
+      await Promise.race([stopped, new Promise((res) => setTimeout(res, 2000))]);
+      if (!current(g)) { chunks.length = 0; record('late clip dropped'); return; }
       const ms = Math.round(performance.now() - t0);
-      cancelAnimationFrame(raf);
-      if (ctx) ctx.close().catch(() => undefined);
+      if (L.raf) { cancelAnimationFrame(L.raf); L.raf = 0; }
+      if (L.ctx) { try { L.ctx.close(); } catch (e) { /* closed */ } L.ctx = null; }
+      L.rec = null;
       stopAll(); // the mic goes off as soon as the clip ends
       const blob = new Blob(chunks, { type: mr.mimeType || S.mime || 'audio/webm' });
+      if (!current(g)) { record('late clip dropped'); return; }
       const url = URL.createObjectURL(blob); urls.add(url);
       play.src = url;
       S.clip = { bytes: blob.size, ms, mime: blob.type, peak: S.peak };
@@ -152,16 +196,11 @@
         { id: 'play', label: 'Play it back' },
         { id: 'discard', label: 'Discard', sub: 'Throw it away now' },
       ];
-    } catch (err) {
-      cancelAnimationFrame(raf);
-      if (ctx) ctx.close().catch(() => undefined);
-      stopAll();
-      S.items = [{ id: 'err', label: why(err), info: true }, { id: 'home', label: '‹ Back' }];
-      record('mic refused: ' + (err && err.name));
     } finally { S.busy = false; }
   }
   async function support() {
-    discard();
+    invalidate('support');
+    const g = L.gen;
     const f = {};
     f['This browser'] = (navigator.userAgent || 'unknown').slice(0, 240);
     f['Secure context'] = String(window.isSecureContext);
@@ -175,6 +214,7 @@
       try { f['Permission: ' + name] = navigator.permissions ? (await navigator.permissions.query({ name })).state : 'no permissions API'; }
       catch (e) { f['Permission: ' + name] = 'not reported'; }
     }
+    if (!current(g)) return;
     f['SDK objects'] = ['PluginMessageHandler', 'creationStorage', 'creationSensors', 'closeWebView'].map((n) => n + (typeof window[n] !== 'undefined' ? ' yes' : ' no')).join(', ');
     f['SDK events seen'] = SDK.map((e) => e + ' ' + S.seen[e]).join(', ');
     f['Network'] = "none: CSP connect-src 'none'";
@@ -191,11 +231,14 @@
       case 'flip': S.facing = S.facing === 'environment' ? 'user' : 'environment'; return camera();
       case 'mic': return micScreen();
       case 'rec': return rec();
-      case 'play': try { await play.play(); S.note = 'Playing on the r1 speaker.'; } catch (e) { S.note = 'Playback failed: ' + e.name; } return undefined;
-      case 'discard': discard(); home(); S.note = 'Thrown away. Camera and mic are off.'; return undefined;
+      case 'play':
+        if (!S.clip || !play.getAttribute('src')) return undefined;
+        try { await play.play(); S.note = 'Playing on the r1 speaker.'; } catch (e) { S.note = 'Playback failed: ' + e.name; }
+        return undefined;
+      case 'discard': home('discard'); S.note = 'Thrown away. Camera and mic are off.'; return undefined;
       case 'support': return support();
-      case 'home': home(); return undefined;
-      case 'close': discard(); window.closeWebView.postMessage(''); return undefined;
+      case 'home': home('back'); return undefined;
+      case 'close': invalidate('close'); window.closeWebView.postMessage(''); return undefined;
       default: return undefined;
     }
   }
@@ -226,7 +269,8 @@
   function paint() {
     const titles = { HOME: 'Capture check', CAMERA: 'Camera', PHOTO: 'Photo (not kept)', MIC: 'Microphone', CLIP: 'Clip (not kept)', SUPPORT: 'What this r1 supports' };
     $('title').textContent = titles[S.screen] || 'Capture check';
-    $('sub').textContent = S.screen === 'CAMERA' || (S.screen === 'MIC' && S.busy) ? (liveTracks() ? '● ' + (S.screen === 'CAMERA' ? 'Camera' : 'Mic') + ' is ON' : 'Nothing is sent. Nothing is kept.') : 'Nothing is sent. Nothing is kept.';
+    $('sub').textContent = (S.screen === 'CAMERA' || (S.screen === 'MIC' && S.busy)) && liveTracks()
+      ? '● ' + (S.screen === 'CAMERA' ? 'Camera' : 'Mic') + ' is ON' : 'Nothing is sent. Nothing is kept.';
     live.hidden = S.screen !== 'CAMERA' || !S.stream;
     shot.hidden = S.screen !== 'PHOTO' || !shot.getAttribute('src');
     $('meter').hidden = !(S.screen === 'MIC' && S.busy) && S.screen !== 'CLIP';
@@ -247,9 +291,9 @@
     else if (e.key === 'Shift' && !e.repeat) window.dispatchEvent(new Event('longPressStart'));
   });
   window.addEventListener('keyup', (e) => { if (e.key === 'Shift') window.dispatchEvent(new Event('longPressEnd')); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { discard(); home(); paint(); } });
-  window.addEventListener('pagehide', discard);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { home('hidden'); paint(); } });
+  window.addEventListener('pagehide', () => { home('pagehide'); paint(); });
 
-  window.r1cap = { state: S, run, liveTracks, urls };
-  home(); paint();
+  window.r1cap = { state: S, run, liveTracks, urls, generation: () => L.gen };
+  home('start'); paint();
 })();
