@@ -1,0 +1,58 @@
+/* r1 ORBIT companion P0. The device screen is 240x282 (creations limit). */
+:root {
+  --bg: #0f1115; --panel: #171a21; --line: #2a2f3a; --text: #eef1f6; --muted: #9aa3b2;
+  --accent: #ff6a1a; /* close to the r1's orange */ --hi-bg: #ff6a1a; --hi-text: #111;
+  --warn-bg: #3a2a10; --warn-text: #ffd28a; --syn: #7fe0c4;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.25 system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+#r1 { width: 240px; height: 282px; overflow: hidden; background: var(--bg); position: relative; }
+.r1 { display: flex; flex-direction: column; width: 240px; height: 282px; }
+.hd { flex: none; padding: 5px 8px 4px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.crumb { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.banner { flex: none; background: var(--warn-bg); color: var(--warn-text); font-size: 11px; padding: 3px 8px; }
+.bd { flex: 1 1 auto; overflow-y: auto; padding: 2px 0; scrollbar-width: none; }
+.bd::-webkit-scrollbar { display: none; }
+.msg { margin: 6px 8px; }
+.fine { margin: 4px 8px; color: var(--muted); font-size: 11px; }
+.list { list-style: none; margin: 0; padding: 0; }
+.it { padding: 5px 8px; border-bottom: 1px solid var(--line); min-height: 34px; display: flex; flex-direction: column; justify-content: center; }
+.it .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.it .s { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.it.hi { background: var(--hi-bg); color: var(--hi-text); }
+.it.hi .s { color: #2b1a10; }
+.it.info { color: var(--muted); font-size: 11px; font-style: italic; min-height: 28px; white-space: normal; }
+.it.info .l { white-space: normal; }
+.it.fact { min-height: 0; padding: 3px 8px; }
+.it.fact .l { font-size: 10.5px; color: var(--muted); }
+.it.fact.hi .l { color: #2b1a10; }
+.it.fact .s { font-size: 11.5px; color: var(--text); white-space: normal; word-break: break-word; }
+.it.fact.hi .s { color: var(--hi-text); }
+.file { display: flex; gap: 6px; padding: 4px 8px; align-items: flex-start; }
+.pv { width: 72px; height: 54px; border-radius: 4px; flex: none; }
+.meta { list-style: none; margin: 0; padding: 0; font-size: 10.5px; color: var(--muted); min-width: 0; }
+.meta li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.path { margin: 2px 8px 2px 26px; padding: 0; font-size: 12px; }
+.facts { margin: 4px 8px; font-size: 10.5px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0 0 3px 0; word-break: break-word; }
+.note { flex: none; background: #1f2b3d; color: #cfe3ff; font-size: 11px; padding: 3px 8px; }
+.ft { flex: none; display: flex; justify-content: space-between; padding: 2px 8px; font-size: 10px; color: var(--muted); border-top: 1px solid var(--line); background: var(--panel); }
+.syn { color: var(--syn); font-weight: 700; letter-spacing: 0.04em; }
+
+/* Harness page only */
+.harness { display: flex; gap: 20px; padding: 16px; align-items: flex-start; flex-wrap: wrap; }
+.frame { padding: 10px; border-radius: 18px; background: var(--accent); }
+.frame.z2 #r1 { zoom: 2; }
+.side { max-width: 460px; }
+.side h1 { font-size: 16px; margin: 0 0 6px; }
+.side h2 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.side p { margin: 4px 0; color: var(--muted); }
+.side kbd { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font-size: 12px; }
+.ctl { display: flex; flex-wrap: wrap; gap: 6px; }
+.ctl button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; cursor: pointer; }
+.ctl button:hover { border-color: var(--accent); }
+.log { font: 11px/1.35 ui-monospace, Consolas, monospace; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px; max-height: 170px; overflow: auto; white-space: pre-wrap; margin: 0; }
+.tag { display: inline-block; background: #12382e; color: var(--syn); border-radius: 4px; padding: 1px 6px; font-weight: 700; }
