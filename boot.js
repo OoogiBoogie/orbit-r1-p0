@@ -47,7 +47,8 @@
   async function probe() {
     const f = {};
     f['This browser'] = (navigator.userAgent || 'unknown').slice(0, 240);
-    f['Window'] = window.innerWidth + '×' + window.innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x';
+    f['Window'] = window.innerWidth + '×' + window.innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x'
+      + (document.body && document.body.getAttribute('data-fit') === 'screen' ? ' · drawn at ' + Math.round(fitState.s * 100) + '%' : '');
     f['Online flag'] = String(navigator.onLine);
     f['Secure context'] = String(window.isSecureContext);
     f['SDK objects'] = ['PluginMessageHandler', 'creationStorage', 'creationSensors', 'closeWebView', 'TouchEventHandler']
@@ -94,7 +95,24 @@
     setInterval(() => { adapter.control.advance(1000); run('tick'); }, 1000);
   }
 
-  window.r1p0 = { comp, adapter, storage, world, paint, run };
+  // Device page only (<body data-fit="screen">): fit the 240x282 design to whatever window the r1 gives a creation
+  // (owner feedback from the r1, 13 Oct 22:16Z: "the size of the window"). Scales evenly and centres; the harness page is not affected.
+  const fitState = { w: 0, h: 0, s: 1 };
+  function fit() {
+    if (!document.body || document.body.getAttribute('data-fit') !== 'screen') return;
+    const w = window.innerWidth || 240; const h = window.innerHeight || 282;
+    const s = Math.max(0.5, Math.min(w / 240, h / 282));
+    fitState.w = w; fitState.h = h; fitState.s = s;
+    document.documentElement.style.overflow = 'hidden'; // the device page never scrolls; the harness page is untouched
+    el.style.transformOrigin = 'top left';
+    el.style.transform = Math.abs(s - 1) < 0.01 ? '' : 'scale(' + s.toFixed(4) + ')';
+    el.style.marginLeft = Math.max(0, Math.floor((w - 240 * s) / 2)) + 'px';
+    el.style.marginTop = Math.max(0, Math.floor((h - 282 * s) / 2)) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  window.r1p0 = { comp, adapter, storage, world, paint, run, fit: () => Object.assign({}, fitState) };
   comp.start().then(paint, (e) => { console.error(e); paint(); });
   paint();
 })();

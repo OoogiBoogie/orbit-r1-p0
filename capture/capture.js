@@ -203,6 +203,7 @@
     const g = L.gen;
     const f = {};
     f['This browser'] = (navigator.userAgent || 'unknown').slice(0, 240);
+    f['Window'] = (window.innerWidth || '?') + '×' + (window.innerHeight || '?') + ' @' + (window.devicePixelRatio || 1) + 'x · drawn at ' + Math.round(fitState.s * 100) + '%';
     f['Secure context'] = String(window.isSecureContext);
     f['Camera/mic API'] = navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'present' : 'absent';
     f['Recording (MediaRecorder)'] = window.MediaRecorder ? (['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].filter((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)).join(', ') || 'present, no listed type') : 'absent';
@@ -294,6 +295,23 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { home('hidden'); paint(); } });
   window.addEventListener('pagehide', () => { home('pagehide'); paint(); });
 
-  window.r1cap = { state: S, run, liveTracks, urls, generation: () => L.gen };
+  // Fit the 240x282 design to whatever window the r1 gives a creation (owner feedback from the r1, 13 Oct 22:16Z: "the size of the window").
+  // Scales the whole screen evenly and centres it; layout and logic are unchanged.
+  const fitState = { w: 0, h: 0, s: 1 };
+  function fit() {
+    const box = document.getElementById('r1');
+    if (!box || !box.style) return;
+    const w = window.innerWidth || 240; const h = window.innerHeight || 282;
+    const s = Math.max(0.5, Math.min(w / 240, h / 282));
+    fitState.w = w; fitState.h = h; fitState.s = s;
+    box.style.transformOrigin = 'top left';
+    box.style.transform = Math.abs(s - 1) < 0.01 ? '' : 'scale(' + s.toFixed(4) + ')';
+    box.style.marginLeft = Math.max(0, Math.floor((w - 240 * s) / 2)) + 'px';
+    box.style.marginTop = Math.max(0, Math.floor((h - 282 * s) / 2)) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  window.r1cap = { state: S, run, liveTracks, urls, generation: () => L.gen, fit: () => Object.assign({}, fitState) };
   home('start'); paint();
 })();
