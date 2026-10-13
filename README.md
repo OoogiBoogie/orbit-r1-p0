@@ -9,3 +9,7 @@ This is a 240×282 demo page. It is meant to be installed on a rabbit r1 as a cr
 Controls on the r1: turn the scroll wheel to move, and press the side button to choose. "Device check" lists what the r1's browser supports.
 
 The files are byte-identical to the tested set; see `MANIFEST.sha256`.
+
+## capture/ — a separate camera/microphone check
+
+Takes one photo or records one 3-second clip when asked, shows it on the r1, then throws it away. Nothing is sent (CSP connect-src 'none') and nothing is stored. The camera/mic is on only while capturing. Files listed in capture/MANIFEST.sha256.

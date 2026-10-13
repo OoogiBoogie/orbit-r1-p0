@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=240, height=282, initial-scale=1, user-scalable=no">
+<title>Capture check</title>
+<link rel="stylesheet" href="capture.css">
+</head>
+<body>
+<div id="r1">
+  <header class="hd"><div class="t" id="title">Capture check</div><div class="s" id="sub">Nothing is sent. Nothing is kept.</div></header>
+  <div class="media" id="media">
+    <video id="live" autoplay muted playsinline hidden></video>
+    <img id="shot" alt="The photo just taken (kept only on this screen)" hidden>
+    <div class="meter" id="meter" hidden><div class="bar" id="bar"></div></div>
+  </div>
+  <main class="bd" id="bd"></main>
+  <div class="note" id="note" role="status" hidden></div>
+  <footer class="ft"><span class="safe">NOTHING SENT OR KEPT</span><span id="hint">⇅ · ●</span></footer>
+</div>
+<audio id="play" hidden></audio>
+<script src="capture.js"></script>
+</body>
+</html>
