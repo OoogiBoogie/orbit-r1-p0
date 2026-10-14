@@ -1,0 +1,15 @@
+/* r1 storage probe: 240x282, plain list; no fonts or images from elsewhere. */
+:root { --bg: #0f1115; --panel: #171a21; --line: #2a2f3a; --text: #eef1f6; --muted: #9aa3b2; --accent: #ff6a1a; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 12px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#probe { width: 240px; height: 282px; overflow: hidden; display: flex; flex-direction: column; }
+.hd { flex: none; padding: 4px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.hd .t { font-weight: 700; font-size: 12px; }
+.hd .c { font: 700 13px/1.25 ui-monospace, Consolas, monospace; color: var(--accent); word-break: break-all; }
+.hd .s { color: var(--muted); font-size: 10.5px; }
+.list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1 1 auto; scrollbar-width: none; }
+.list::-webkit-scrollbar { display: none; }
+.list li { padding: 3px 8px; border-bottom: 1px solid var(--line); word-break: break-word; }
+.list li.hi { background: var(--accent); color: #111; }
+.list .k { color: var(--muted); font-size: 10.5px; }
+.list li.hi .k { color: #2b1a10; }
