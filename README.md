@@ -17,3 +17,11 @@ Takes one photo or records one 3-second clip when asked, shows it on the r1, the
 ## storage-probe/ — where and when the r1 gives a creation its storage
 
 Two variants of one diagnostic: `a/` uses the same script policy as the ORBIT companion page (`script-src 'self'`); `b/` has no script restriction. Both have `connect-src 'none'`. It records only whether `window.creationStorage` (and its `secure`/`plain` methods) exists, and when it first appears (script start to 20 s after load), when each storage becomes usable, and one round trip of a random throwaway value per storage and key style (each step waits at most 5 s; a step that never answers can't be cancelled, so removing the test value is attempted, not guaranteed). It never shows or keeps a stored value, never calls `clear()`, and sends nothing. The result is a short code and plain words on the screen. Files listed in storage-probe/MANIFEST.sha256.
+
+## capability-probe/ — what a stock r1 creation can play, record and say
+
+A diagnostic for the r1's own browser. It plays and decodes only its own small synthetic test files: solid red pictures and 2-second red videos with a 440 Hz tone, in H.264, HEVC, VP8, VP9 and AV1 video; AAC, MP3, Opus, Vorbis, WAV and FLAC audio; and JPEG, PNG, WebP, GIF and AVIF images. It reports which of them really decode and render, and whether video may start without a tap. It also lists what the browser can record, whether speech synthesis and recognition exist (presence only; recognition is never started), and how many voices are on-device.
+
+Only when you press does it play a beep, a tone or a short video, or say a fixed test phrase, and only with an on-device voice. Holding the side button records from the microphone ONLY while held, then shows the length, size and loudness. The clip is never kept or sent. Note that the r1 itself may hand speech to rabbit's assistant during a hold, so say only "one two three". Anything rabbit's system delivers to the page is shown as its SHAPE only (keys, types and lengths), never its words.
+
+It never calls rabbit's `PluginMessageHandler` (no LLM call) and stores nothing. Its CSP is `connect-src 'self'`: it loads only its own files. Files are listed in capability-probe/MANIFEST.sha256.
