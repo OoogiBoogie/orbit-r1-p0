@@ -1,4 +1,4 @@
-/* r1 capability probe rev 1 (Codex 5ab79507, R1-EVERYDAY-1 item 3): what a STOCK r1 creation can actually do, OBSERVED on
+/* r1 capability probe rev 2 (Codex 5ab79507, R1-EVERYDAY-1 item 3): what a STOCK r1 creation can actually do, OBSERVED on
  * the device instead of assumed from the docs. Synthetic and noncredential: it decodes and plays only its own small test
  * files (solid red pictures and videos, a 440 Hz tone), never calls PluginMessageHandler (no rabbit LLM or provider call),
  * never starts speech recognition, sends nothing anywhere (CSP connect-src 'self' = its own files only) and stores nothing.
@@ -7,6 +7,9 @@
  *  - each test file: does it decode and render? Video: metadata, a decoded RED frame drawn to a canvas, whether muted play()
  *    is allowed WITHOUT a gesture, and whether time advances. Audio: decoding (offline WebAudio) and an <audio> element's
  *    metadata. Images: decode plus a RED pixel;
+ *  - ORBIT's viewer path (app lane #253 viewer.js) on its own files: one fetch (credentials omit, no-store, redirect error,
+ *    no referrer, abortable), the body read as a stream, SHA-256 checked against the published value, then a blob: URL
+ *    decoded and revoked; plus canPlayType for the viewer's bare types;
  *  - what MediaRecorder can record, whether speechSynthesis / SpeechRecognition exist (presence only), how many voices are
  *    ON-DEVICE, which rabbit channels exist (typeof only).
  * Only when the person acts (side button OR a tap, recorded separately because a host-dispatched side click is not a browser
@@ -19,12 +22,12 @@
   else root.R1CapProbe = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
-  const REV = 1;
+  const REV = 2;
   const FORMATS = [
     ['video', 'H264b', 'v-h264-base.mp4', 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'],
     ['video', 'H264h', 'v-h264-high.mp4', 'video/mp4; codecs="avc1.640028, mp4a.40.2"'],
     ['video', 'HEVC', 'v-hevc.mp4', 'video/mp4; codecs="hvc1.1.6.L93.B0, mp4a.40.2"'],
-    ['video', 'VP8', 'v-vp8.webm', 'video/webm; codecs="vp8, vorbis"'],
+    ['video', 'VP8', 'v-vp8.webm', 'video/webm; codecs="vp8, opus"'],
     ['video', 'VP9', 'v-vp9.webm', 'video/webm; codecs="vp9, opus"'],
     ['video', 'AV1', 'v-av1.webm', 'video/webm; codecs="av01.0.00M.08, opus"'],
     ['audio', 'AAC', 'a-aac.m4a', 'audio/mp4; codecs="mp4a.40.2"'],
@@ -42,6 +45,20 @@
   ];
   const RECORD_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/mp4'];
   const CHANNELS = ['PluginMessageHandler', 'closeWebView', 'TouchEventHandler', 'creationStorage', 'creationSensors'];
+  // the viewer path (#253 viewer.js) on the probe's own files: [id, file, type, SHA-256 of the published file]
+  const PIPE = [
+    ['JPG', 'i-jpg.jpg', 'image/jpeg', 'd3db612d4f7d0ce3c8a288ee5462db77c1ae2214b42a95196b743e90f9075dbc'],
+    ['PNG', 'i-png.png', 'image/png', 'cd5211dc818b3d00c900dc265c84f278400ebff796bee8d930c1a72b0bca1ec1'],
+    ['WEBP', 'i-webp.webp', 'image/webp', '9ecb499dd9aa462f014ca4e9ea459c6be464c1e0a6795a3f876a79fe9bed3b6e'],
+    ['GIF', 'i-gif.gif', 'image/gif', 'f6925f8d9706d59dd610bad03d9138d6990b232a050c02f859468fd6561eedb4'],
+    ['H264b', 'v-h264-base.mp4', 'video/mp4', 'a7de0ea7245f5cbb101c4f4e79d827f13356425db9b2f0c80262dd408936a775'],
+    ['VP8', 'v-vp8.webm', 'video/webm', 'dd259202386c1f6009055be4300d8cd0b68aeed0931f56d39bfeec62d6efde4f'],
+    ['VP9', 'v-vp9.webm', 'video/webm', '4c7145ee53d591dc26eecffe2d43317d51d20711d8d9cd0b068cc17980336fe2'],
+    ['AAC', 'a-aac.m4a', 'audio/mp4', 'ddc9b0e96e72c77f9cd78e3eed4300dbff5ab2d4f2c27ae093248c756b6c40bb'],
+    ['OPUSw', 'a-opus.webm', 'audio/webm', '23b44d7fdf8363e3cad93d70855285698814d0fa618354bf7f789ccf8b491ce9'],
+    ['OPUSo', 'a-opus.ogg', 'audio/ogg', '3ef673e6226a72fa96124b7c5e0c5ad31d9b9e5a76f93add8303db010915e86a'],
+  ];
+  const BARE = ['video/mp4', 'video/webm', 'audio/mp4', 'audio/webm', 'audio/ogg'];
   const ACTIONS = [['beep', 'Play a test beep (audio element)'], ['tone', 'Play a test tone (WebAudio)'], ['video', 'Play a test video with sound'], ['phrase', 'Say a test phrase (on-device voice only)'], ['again', 'Run the format tests again']];
   const ACT_NAMES = { beep: 'Beep', tone: 'Tone', video: 'Video', phrase: 'Phrase' };
   const isRed = (px) => Boolean(px) && px[0] > 150 && px[1] < 100 && px[2] < 100;
@@ -64,12 +81,22 @@
     return 'NO';
   }
   const verdictImage = (t) => (t.decoded && t.red ? 'OK' : t.decoded ? 'DRAW?' : 'NO');
+  /** The viewer path: OK only when the streamed bytes hash right AND the blob: URL decodes (red picture / media metadata). */
+  function verdictPipe(t) {
+    if (t.shown) return 'OK';
+    if (!t.stream) return t.err === 'no stream' ? 'NOSTREAM' : 'FETCH' + (t.err ? '(' + t.err + ')' : '');
+    if (t.err === 'no crypto.subtle') return 'NOCRYPTO';
+    if (!t.hash) return 'HASH';
+    if (!t.blob) return 'BLOB' + (t.err ? '(' + t.err + ')' : '');
+    return 'SHOW';
+  }
   /** The short line for a photo: OK counts per kind, then every other verdict by name. */
-  function headline(results) {
+  function headline(results, pipe) {
     const by = (k) => results.filter((r) => r.kind === k);
     const ok = (rs) => rs.filter((r) => r.verdict === 'OK').length;
-    const bad = results.filter((r) => r.verdict !== 'OK').map((r) => r.id + '-' + r.verdict);
-    return 'r' + REV + ' V' + ok(by('video')) + '/' + by('video').length + ' A' + ok(by('audio')) + '/' + by('audio').length + ' I' + ok(by('image')) + '/' + by('image').length + (bad.length ? ' x ' + bad.join(',') : '');
+    const p = pipe || [];
+    const bad = results.filter((r) => r.verdict !== 'OK').map((r) => r.id + '-' + r.verdict).concat(p.filter((r) => r.verdict !== 'OK').map((r) => 'p' + r.id + '-' + r.verdict));
+    return 'r' + REV + ' V' + ok(by('video')) + '/' + by('video').length + ' A' + ok(by('audio')) + '/' + by('audio').length + ' I' + ok(by('image')) + '/' + by('image').length + ' P' + ok(p) + '/' + p.length + (bad.length ? ' x ' + bad.join(',') : '');
   }
   /** Whether muted video may start WITHOUT a gesture, from the automatic run. */
   function autoplayFact(results) {
@@ -89,8 +116,8 @@
 
   function boot(win, doc) {
     const $ = (id) => doc.getElementById(id);
-    const state = { hi: 0, results: [], facts: {}, note: '', busy: false, running: false, hold: null, messages: [], voices: null, localVoice: null,
-      ev: { side: 0, start: 0, end: 0, up: 0, down: 0, hiddenInHold: 0, blurInHold: 0 }, acts: { beep: [], tone: [], video: [], phrase: [] } };
+    const state = { hi: 0, results: [], pipe: [], facts: {}, note: '', busy: false, running: false, hold: null, messages: [], voices: null, localVoice: null,
+      ev: { side: 0, start: 0, end: 0, up: 0, down: 0, hiddenInHold: 0, blurInHold: 0, pointer: 0, touch: 0, click: 0 }, acts: { beep: [], tone: [], video: [], phrase: [] } };
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
     const sleep = (ms) => new Promise((r) => win.setTimeout(r, ms));
     const within = (p, ms) => Promise.race([p, sleep(ms).then(() => 'timeout')]);
@@ -158,14 +185,54 @@
       try { const d = await within(img.decode(), 6000); t.decoded = d !== 'timeout' && img.naturalWidth === 64; if (t.decoded) t.red = isRed(pixel(img, 64, 48)); } catch (e) { t.decoded = false; }
       return t;
     }
+    const hex = (buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    async function showBlob(url, p) {
+      const kind = p[2].split('/')[0];
+      if (kind === 'image') { const img = new win.Image(); img.src = url; const d = await within(img.decode(), 10000); return d !== 'timeout' && img.naturalWidth === 64 && isRed(pixel(img, 64, 48)); }
+      const el = doc.createElement(kind); el.muted = true; el.preload = 'auto';
+      if (kind === 'video') { el.playsInline = true; el.className = 'probe-media'; $('stage').appendChild(el); }
+      const r = await within(new Promise((res) => { el.addEventListener(kind === 'video' ? 'loadeddata' : 'loadedmetadata', () => res('ok'), { once: true }); el.addEventListener('error', () => res('error'), { once: true }); el.src = url; }), 10000);
+      let shown = false;
+      try { shown = r === 'ok' && (kind === 'video' ? el.videoWidth > 0 && isRed(pixel(el, 16, 12)) : el.duration > 0); } catch (e) { shown = false; }
+      el.removeAttribute('src'); try { el.load(); } catch (e) { /* gone */ }
+      el.remove();
+      return shown;
+    }
+    // the viewer path, as #253 viewer.js does it, on the probe's own file; nothing leaves the page's origin
+    async function pipeline(p) {
+      const t = { stream: false, bytes: 0, hash: false, blob: false, shown: false, err: '' };
+      const ac = win.AbortController ? new win.AbortController() : null;
+      const timer = win.setTimeout(() => { if (ac) ac.abort(); }, 10000);
+      try {
+        const res = await win.fetch(media(p[1]), { credentials: 'omit', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer', signal: ac ? ac.signal : undefined });
+        if (!res.ok) { t.err = 'HTTP ' + res.status; return t; }
+        if (!res.body || typeof res.body.getReader !== 'function') { t.err = 'no stream'; return t; }
+        const reader = res.body.getReader(); const parts = [];
+        for (;;) { const c = await reader.read(); if (c.done) break; parts.push(c.value); t.bytes += c.value.byteLength; }
+        t.stream = true;
+        const all = new Uint8Array(t.bytes); let o = 0;
+        for (const x of parts) { all.set(x, o); o += x.byteLength; }
+        if (!win.crypto || !win.crypto.subtle) { t.err = 'no crypto.subtle'; return t; }
+        t.hash = hex(await win.crypto.subtle.digest('SHA-256', all)) === p[3];
+        if (!t.hash) return t;
+        const url = win.URL.createObjectURL(new win.Blob([all], { type: p[2] })); t.blob = true;
+        try { t.shown = await showBlob(url, p); } finally { win.URL.revokeObjectURL(url); }
+      } catch (e) { t.err = (e && e.name) || 'error'; } finally { win.clearTimeout(timer); }
+      return t;
+    }
     async function formats() {
       if (state.running) return;
-      state.running = true; state.results = []; render();
+      state.running = true; state.results = []; state.pipe = []; render();
       try {
         for (const f of FORMATS) {
           const t = f[0] === 'video' ? await testVideo(f) : f[0] === 'audio' ? await testAudio(f) : await testImage(f);
           const verdict = f[0] === 'video' ? verdictVideo(t) : f[0] === 'audio' ? verdictAudio(t) : verdictImage(t);
           state.results.push({ kind: f[0], id: f[1], file: f[2], verdict, detail: t });
+          render();
+        }
+        for (const p of PIPE) {
+          const t = await pipeline(p);
+          state.pipe.push({ id: p[0], file: p[1], verdict: verdictPipe(t), detail: t });
           render();
         }
         state.facts['Muted autoplay without a gesture'] = autoplayFact(state.results);
@@ -177,6 +244,10 @@
       state.facts['Mic/camera API'] = win.navigator.mediaDevices && win.navigator.mediaDevices.getUserMedia ? 'present' : 'absent';
       state.facts['Speech recognition API'] = (win.SpeechRecognition ? 'SpeechRecognition' : win.webkitSpeechRecognition ? 'webkitSpeechRecognition' : 'absent') + ' (presence only; never started)';
       state.facts['speechSynthesis'] = win.speechSynthesis ? 'present' : 'absent';
+      const probeEl = doc.createElement('video');
+      state.facts['canPlayType (bare types)'] = BARE.map((m) => m + ' "' + probeEl.canPlayType(m) + '"').join(', ');
+      state.facts['Viewer APIs'] = ['ReadableStream', 'AbortController', 'Blob', 'PointerEvent'].map((n) => n + ' ' + (typeof win[n] === 'function' ? 'yes' : 'no')).join(', ')
+        + ', crypto.subtle ' + (win.crypto && win.crypto.subtle ? 'yes' : 'no') + ', createObjectURL ' + (win.URL && typeof win.URL.createObjectURL === 'function' ? 'yes' : 'no');
       state.facts['Channels'] = CHANNELS.map((c) => c + ':' + typeOf(win[c])).join(', ');
       state.facts['This browser'] = String(win.navigator.userAgent || '').slice(0, 180);
     }
@@ -300,8 +371,8 @@
     }
     // ---- screen ----
     function snapshot() {
-      const h = state.hold; const done = state.results.length === FORMATS.length && !state.running;
-      return { rev: REV, done, headline: done ? headline(state.results) : null, results: state.results, facts: state.facts, voices: state.voices, acts: state.acts, ev: state.ev,
+      const h = state.hold; const done = state.results.length === FORMATS.length && state.pipe.length === PIPE.length && !state.running;
+      return { rev: REV, done, headline: done ? headline(state.results, state.pipe) : null, results: state.results, pipe: state.pipe, facts: state.facts, voices: state.voices, acts: state.acts, ev: state.ev,
         hold: h ? { outcome: h.outcome, ms: h.active ? Date.now() - h.t0 : h.ms, bytes: h.bytes, peak: h.peak, type: h.type } : null, messages: state.messages };
     }
     function render() {
@@ -314,14 +385,15 @@
       lines.push(['Side-button hold', h ? h.outcome + ' · ' + Math.round(h.ms / 100) / 10 + ' s · ' + h.bytes + ' B ' + (h.type || '') + ' · loudness ' + h.peak + '% · page hidden ' + state.ev.hiddenInHold + ' · lost focus ' + state.ev.blurInHold
         : 'not tried. Hold the side button 2–3 s and say only "one two three": the r1 itself may hand speech to rabbit\'s assistant.']);
       lines.push(['Messages to this page', state.messages.length ? state.messages.length + ': ' + state.messages.slice(-2).map((m) => m.shape).join(' ; ') : 'none (window.onPluginMessage watched; shape only)']);
-      lines.push(['Hardware events', 'side ' + state.ev.side + ' · hold start ' + state.ev.start + ' / end ' + state.ev.end + ' · wheel up ' + state.ev.up + ' / down ' + state.ev.down]);
+      lines.push(['Hardware events', 'side ' + state.ev.side + ' · hold start ' + state.ev.start + ' / end ' + state.ev.end + ' · wheel up ' + state.ev.up + ' / down ' + state.ev.down + ' · taps: pointer ' + state.ev.pointer + ' / touch ' + state.ev.touch + ' / click ' + state.ev.click]);
       for (const x of state.results) lines.push([x.id, x.verdict + (x.kind === 'video' ? ' · play ' + x.detail.play : '') + (x.kind !== 'image' ? ' · canPlayType "' + (x.detail.canPlay || '') + '"' : '')]);
+      for (const x of state.pipe) lines.push(['Viewer path ' + x.id, x.verdict + ' · ' + x.detail.bytes + ' B' + (x.detail.err ? ' · ' + x.detail.err : '')]);
       for (const k of Object.keys(state.facts)) lines.push([k, state.facts[k]]);
       const rows = ACTIONS.length + lines.length;
       if (state.hi >= rows) state.hi = rows - 1;
       const li = ACTIONS.map((a, i) => '<li class="act' + (i === state.hi ? ' hi' : '') + '" data-i="' + i + '">' + esc(a[1]) + '</li>')
         .concat(lines.map((l, j) => '<li data-i="' + (ACTIONS.length + j) + '"' + (ACTIONS.length + j === state.hi ? ' class="hi"' : '') + '>' + (l[0] ? '<span class="k">' + esc(l[0]) + '</span> ' : '') + esc(l[1]) + '</li>'));
-      root.innerHTML = '<header class="hd"><div class="t">r1 capability probe · rev ' + REV + '</div><div class="c" id="code">' + esc(s.done ? s.headline : 'testing formats ' + state.results.length + '/' + FORMATS.length + '…') + '</div><div class="s">'
+      root.innerHTML = '<header class="hd"><div class="t">r1 capability probe · rev ' + REV + '</div><div class="c" id="code">' + esc(s.done ? s.headline : state.results.length < FORMATS.length ? 'testing formats ' + state.results.length + '/' + FORMATS.length + '…' : 'testing the viewer path ' + state.pipe.length + '/' + PIPE.length + '…') + '</div><div class="s">'
         + (s.done ? 'Photo this; turn the wheel for each line. Side button or tap = do the highlighted action.' : 'Working (about a minute). Nothing is sent or stored.') + '</div></header><ul class="list">' + li.join('') + '</ul>';
       const hiEl = root.querySelector('li.hi'); if (hiEl && hiEl.scrollIntoView) hiEl.scrollIntoView({ block: 'nearest' });
       win.R1CapResult = s;
@@ -335,11 +407,14 @@
     $('cap').addEventListener('click', (e) => { const el = e.target && e.target.closest ? e.target.closest('li[data-i]') : null; if (!el) return; state.hi = Number(el.getAttribute('data-i')); press('tap'); });
     win.addEventListener('keydown', (e) => { if (e.key === 'ArrowUp') move(-1); else if (e.key === 'ArrowDown') move(1); else if (e.key === 'Enter') press('key'); });
     win.addEventListener('pagehide', () => { stopHoldRecording('hidden'); });
+    doc.addEventListener('pointerdown', () => { state.ev.pointer += 1; }, true);
+    doc.addEventListener('touchstart', () => { state.ev.touch += 1; }, { capture: true, passive: true });
+    doc.addEventListener('click', () => { state.ev.click += 1; }, true);
     facts(); render();
     (async () => { await voices(); render(); await formats(); render(); })();
   }
   if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.__R1_CAP_NO_AUTOBOOT) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => boot(window, document)); else boot(window, document);
   }
-  return { REV, FORMATS, ACTIONS, verdictVideo, verdictAudio, verdictImage, headline, autoplayFact, shape };
+  return { REV, FORMATS, PIPE, BARE, ACTIONS, verdictVideo, verdictAudio, verdictImage, verdictPipe, headline, autoplayFact, shape };
 });
