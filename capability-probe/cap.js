@@ -1,7 +1,7 @@
-/* r1 capability probe rev 2 (Codex 5ab79507, R1-EVERYDAY-1 item 3): what a STOCK r1 creation can actually do, OBSERVED on
+/* r1 capability probe rev 3 (Codex 5ab79507, R1-EVERYDAY-1 item 3): what a STOCK r1 creation can actually do, OBSERVED on
  * the device instead of assumed from the docs. Synthetic and noncredential: it decodes and plays only its own small test
  * files (solid red pictures and videos, a 440 Hz tone), never calls PluginMessageHandler (no rabbit LLM or provider call),
- * never starts speech recognition, sends nothing anywhere (CSP connect-src 'self' = its own files only) and stores nothing.
+ * never starts a non-local speech recognizer, sends nothing anywhere (CSP connect-src 'self' = its own files only) and stores nothing.
  *
  * Automatic and silent on open:
  *  - each test file: does it decode and render? Video: metadata, a decoded RED frame drawn to a canvas, whether muted play()
@@ -10,11 +10,14 @@
  *  - ORBIT's viewer path (app lane #253 viewer.js) on its own files: one fetch (credentials omit, no-store, redirect error,
  *    no referrer, abortable), the body read as a stream, SHA-256 checked against the published value, then a blob: URL
  *    decoded and revoked; plus canPlayType for the viewer's bare types;
- *  - what MediaRecorder can record, whether speechSynthesis / SpeechRecognition exist (presence only), how many voices are
- *    ON-DEVICE, which rabbit channels exist (typeof only).
+ *  - what MediaRecorder can record, whether speechSynthesis exists and how many voices are ON-DEVICE, which rabbit channels
+ *    exist (typeof only), and whether SpeechRecognition exists (presence only).
+ * Asked only when pressed, after the results are on screen (a hang there can't cost the photo): where the browser says
+ * speech recognition WOULD run, SpeechRecognition.available() for en-US on-device and non-local (never install()).
  * Only when the person acts (side button OR a tap, recorded separately because a host-dispatched side click is not a browser
  * gesture): a beep (<audio>), a tone (WebAudio), a short red video with sound, a fixed test phrase with an ON-DEVICE voice
- * only. A side-button HOLD records from the mic only while held and reports length, bytes and loudness; whether the page
+ * only, and a speech-recognition test that starts ONLY if the browser promises ON-DEVICE recognition (processLocally) and
+ * keeps only the length of what it heard and whether it was the test words. A side-button HOLD records from the mic only while held and reports length, bytes and loudness; whether the page
  * was hidden or lost focus during the hold (the r1's own assistant taking over); and the SHAPE of anything delivered to
  * window.onPluginMessage (keys, types, lengths; never content). The clip is never kept or sent. */
 (function (root, factory) {
@@ -22,7 +25,7 @@
   else root.R1CapProbe = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
-  const REV = 2;
+  const REV = 3;
   const FORMATS = [
     ['video', 'H264b', 'v-h264-base.mp4', 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'],
     ['video', 'H264h', 'v-h264-high.mp4', 'video/mp4; codecs="avc1.640028, mp4a.40.2"'],
@@ -59,8 +62,8 @@
     ['OPUSo', 'a-opus.ogg', 'audio/ogg', '3ef673e6226a72fa96124b7c5e0c5ad31d9b9e5a76f93add8303db010915e86a'],
   ];
   const BARE = ['video/mp4', 'video/webm', 'audio/mp4', 'audio/webm', 'audio/ogg'];
-  const ACTIONS = [['beep', 'Play a test beep (audio element)'], ['tone', 'Play a test tone (WebAudio)'], ['video', 'Play a test video with sound'], ['phrase', 'Say a test phrase (on-device voice only)'], ['again', 'Run the format tests again']];
-  const ACT_NAMES = { beep: 'Beep', tone: 'Tone', video: 'Video', phrase: 'Phrase' };
+  const ACTIONS = [['beep', 'Play a test beep (audio element)'], ['tone', 'Play a test tone (WebAudio)'], ['video', 'Play a test video with sound'], ['phrase', 'Say a test phrase (on-device voice only)'], ['ask', 'Ask where speech recognition would run'], ['listen', 'Try speech recognition (on-device only)'], ['again', 'Run the format tests again']];
+  const ACT_NAMES = { beep: 'Beep', tone: 'Tone', video: 'Video', phrase: 'Phrase', ask: 'Ask', listen: 'Listen' };
   const isRed = (px) => Boolean(px) && px[0] > 150 && px[1] < 100 && px[2] < 100;
   const typeOf = (v) => (v === null ? 'null' : typeof v);
 
@@ -112,12 +115,18 @@
     if (d > 1) return 'object';
     return '{' + Object.keys(v).slice(0, 12).map((k) => k + ':' + shape(v[k], d + 1)).join(',') + '}';
   }
+  /** What the page keeps of recognized speech: its length and whether it was the test words; never the words. */
+  function listenOutcome(words) {
+    if (words == null) return 'ended, no words';
+    const w = String(words);
+    return 'heard ' + w.length + ' characters; the test words: ' + (/^\s*(one|1)[\s,.-]*(two|2)[\s,.-]*(three|3)[\s.!]*$/i.test(w) ? 'yes' : 'no');
+  }
   const actLine = (list) => (list.length ? list.map((x) => x.trigger + ': ' + x.outcome).join(' · ') : 'not tried');
 
   function boot(win, doc) {
     const $ = (id) => doc.getElementById(id);
     const state = { hi: 0, results: [], pipe: [], facts: {}, note: '', busy: false, running: false, hold: null, messages: [], voices: null, localVoice: null,
-      ev: { side: 0, start: 0, end: 0, up: 0, down: 0, hiddenInHold: 0, blurInHold: 0, pointer: 0, touch: 0, click: 0 }, acts: { beep: [], tone: [], video: [], phrase: [] } };
+      ev: { side: 0, start: 0, end: 0, up: 0, down: 0, hiddenInHold: 0, blurInHold: 0, pointer: 0, touch: 0, click: 0 }, acts: { beep: [], tone: [], video: [], phrase: [], ask: [], listen: [] }, recog: null };
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
     const sleep = (ms) => new Promise((r) => win.setTimeout(r, ms));
     const within = (p, ms) => Promise.race([p, sleep(ms).then(() => 'timeout')]);
@@ -242,8 +251,8 @@
       const MR = win.MediaRecorder;
       state.facts['Records'] = MR ? (RECORD_TYPES.filter((m) => typeof MR.isTypeSupported === 'function' && MR.isTypeSupported(m)).join(', ') || 'none of the listed types') : 'no MediaRecorder';
       state.facts['Mic/camera API'] = win.navigator.mediaDevices && win.navigator.mediaDevices.getUserMedia ? 'present' : 'absent';
-      state.facts['Speech recognition API'] = (win.SpeechRecognition ? 'SpeechRecognition' : win.webkitSpeechRecognition ? 'webkitSpeechRecognition' : 'absent') + ' (presence only; never started)';
       state.facts['speechSynthesis'] = win.speechSynthesis ? 'present' : 'absent';
+      state.facts['Speech recognition API'] = (win.SpeechRecognition ? 'SpeechRecognition' : win.webkitSpeechRecognition ? 'webkitSpeechRecognition' : 'absent') + ' · not asked yet (press "Ask where speech recognition would run")';
       const probeEl = doc.createElement('video');
       state.facts['canPlayType (bare types)'] = BARE.map((m) => m + ' "' + probeEl.canPlayType(m) + '"').join(', ');
       state.facts['Viewer APIs'] = ['ReadableStream', 'AbortController', 'Blob', 'PointerEvent'].map((n) => n + ' ' + (typeof win[n] === 'function' ? 'yes' : 'no')).join(', ')
@@ -260,6 +269,17 @@
       state.voices = { total: list.length, local: local.length, langs: Array.from(new Set(local.map((v) => v.lang))).slice(0, 6) };
       state.localVoice = local.find((v) => /^en/i.test(v.lang)) || local[0] || null;
       state.facts['Voices'] = list.length + ' (on-device ' + local.length + (local.length ? ': ' + state.voices.langs.join(' ') : '') + ')';
+    }
+    // where the browser says recognition WOULD run (asked only when pressed: no audio, no install(), no start)
+    async function recogFacts() {
+      const SR = win.SpeechRecognition || win.webkitSpeechRecognition;
+      const rc = { api: win.SpeechRecognition ? 'SpeechRecognition' : win.webkitSpeechRecognition ? 'webkitSpeechRecognition' : 'absent', processLocally: Boolean(SR && 'processLocally' in SR.prototype), local: 'not asked', remote: 'not asked' };
+      if (SR && typeof SR.available === 'function') {
+        const ask = async (onDevice) => { try { return String(await within(SR.available({ langs: ['en-US'], processLocally: onDevice }), 3000)); } catch (e) { return 'error ' + ((e && e.name) || ''); } };
+        rc.local = await ask(true); rc.remote = await ask(false);
+      } else if (SR) { rc.local = 'no available()'; rc.remote = 'no available()'; }
+      state.recog = rc;
+      state.facts['Speech recognition API'] = rc.api + (SR ? ' · on-device en-US ' + rc.local + ' · non-local en-US ' + rc.remote + ' · processLocally ' + (rc.processLocally ? 'known' : 'unknown') : '') + ' (asked only; never installs; starts only on press and only on-device)';
     }
     // ---- person-pressed tests: play() / resume() / speak() are called synchronously from the press, so a TAP counts as a gesture ----
     async function playEl(el) {
@@ -319,7 +339,30 @@
         ss.speak(u);
       });
     }
-    const RUN = { beep, tone, video, phrase };
+    async function askRec() {
+      await recogFacts();
+      const rc = state.recog;
+      return rc.api === 'absent' ? 'no SpeechRecognition' : 'on-device en-US ' + rc.local + ' · non-local en-US ' + rc.remote;
+    }
+    // starts ONLY when the browser promises on-device recognition for en-US; keeps the length and a yes/no, never the words
+    function listen() {
+      return new Promise((res) => {
+        const SR = win.SpeechRecognition || win.webkitSpeechRecognition;
+        if (!state.recog) return res('not started: press "Ask where speech recognition would run" first');
+        const rc = state.recog;
+        if (!SR || rc.local !== 'available' || !rc.processLocally) return res('not started: the browser does not promise on-device recognition (on-device ' + (rc.local || 'absent') + ')');
+        const r = new SR(); r.lang = 'en-US'; r.processLocally = true; r.continuous = false; r.interimResults = false; r.maxAlternatives = 1;
+        if (r.processLocally !== true) return res('not started: processLocally did not stick');
+        let words = null; let tm = 0;
+        const done = (x) => { win.clearTimeout(tm); res(x); };
+        r.onresult = (e) => { try { words = String(e.results[0][0].transcript); } catch (x) { words = ''; } };
+        r.onerror = (e) => done('error ' + ((e && e.error) || ''));
+        r.onend = () => done(listenOutcome(words));
+        tm = win.setTimeout(() => { try { r.abort(); } catch (e) { /* gone */ } res('stopped at 8 s'); }, 8000);
+        r.start();
+      });
+    }
+    const RUN = { beep, tone, video, phrase, ask: askRec, listen };
     async function press(trigger) {
       if (state.busy) return;
       const a = ACTIONS[state.hi]; if (!a) return; // highlighted row is a result line, not an action
@@ -328,7 +371,7 @@
         if (a[0] === 'again') { state.note = ''; await formats(); } else {
           const out = await RUN[a[0]]();
           state.acts[a[0]].push({ trigger, outcome: out });
-          state.note = /^(played|spoke)|unmuted/.test(out) ? ACT_NAMES[a[0]] + ' ' + out + ' (' + trigger + '). Did you HEAR it? Tell the chat.' : ACT_NAMES[a[0]] + ': ' + out + ' (' + trigger + ').';
+          state.note = /^(played|spoke|heard)|unmuted/.test(out) ? ACT_NAMES[a[0]] + ' ' + out + ' (' + trigger + '). Did you HEAR it? Tell the chat.' : ACT_NAMES[a[0]] + ': ' + out + ' (' + trigger + ').';
         }
       } catch (e) { state.note = 'Error: ' + ((e && e.name) || 'unknown'); } finally { state.busy = false; render(); }
     }
@@ -416,5 +459,5 @@
   if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.__R1_CAP_NO_AUTOBOOT) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => boot(window, document)); else boot(window, document);
   }
-  return { REV, FORMATS, PIPE, BARE, ACTIONS, verdictVideo, verdictAudio, verdictImage, verdictPipe, headline, autoplayFact, shape };
+  return { REV, FORMATS, PIPE, BARE, ACTIONS, verdictVideo, verdictAudio, verdictImage, verdictPipe, headline, autoplayFact, shape, listenOutcome };
 });
