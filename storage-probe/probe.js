@@ -24,6 +24,7 @@
   const KEYS = [['colon', 'orbit-companion:probe'], ['hyphen', 'orbit_companion-probe'], ['snake', 'orbit_companion_probe']];
   const KINDS = ['secure', 'plain'];
   const STEPS = 4; // set, get, remove, get-after
+  const REV = '2'; // shown on screen and in the result, so a photo says which revision ran (Codex 0273ecbe correction)
   const typeOf = (v) => (v === null ? 'null' : typeof v);
   const safe = (fn) => { try { return fn(); } catch (e) { return undefined; } };
   const present = (t) => t !== 'undefined' && t !== 'null';
@@ -134,7 +135,7 @@
       const trio = (kind) => KEYS.map(([n]) => rc(kind + '.' + n)).join('/'); // colon / hyphen / snake key
       const when = at(firstSeen.creationStorage);
       const code = variant + '.' + when + '.S@' + at(ready.secure) + ':' + trio('secure') + '.P@' + at(ready.plain) + ':' + trio('plain') + '.V' + violations.length;
-      return { code, when, firstSeen, nullSeen, ready, state: Object.assign({}, state), progress: Object.assign({}, progress), roundTrips: rts, violations, timeline, done: isDone(), finishedAt };
+      return { rev: REV, code, when, firstSeen, nullSeen, ready, state: Object.assign({}, state), progress: Object.assign({}, progress), roundTrips: rts, violations, timeline, done: isDone(), finishedAt };
     }
     return { sample, violation, advance, summary, snapshot: () => snapshot(win) };
   }
@@ -195,7 +196,7 @@
       facts.push(['Window', win.innerWidth + '×' + win.innerHeight]);
       facts.push(['Network', "none (connect-src 'none')"]);
       state.lines = words(sum).map((t) => ['', t]).concat(facts);
-      root.innerHTML = '<header class="hd"><div class="t">Storage probe ' + esc(variant) + '</div><div class="c" id="code">' + esc(sum.code) + '</div><div class="s">' + esc(status(sum)) + '</div></header>'
+      root.innerHTML = '<header class="hd"><div class="t">Storage probe ' + esc(variant) + ' · rev ' + REV + '</div><div class="c" id="code">' + esc(sum.code) + '</div><div class="s">' + esc(status(sum)) + '</div></header>'
         + '<ul class="list">' + state.lines.map((l, i) => '<li class="' + (i === state.hi ? 'hi' : '') + '">' + (l[0] ? '<span class="k">' + esc(l[0]) + '</span> ' : '') + esc(l[1]) + '</li>').join('') + '</ul>';
       const hiEl = root.querySelector('li.hi'); if (hiEl && hiEl.scrollIntoView) hiEl.scrollIntoView({ block: 'nearest' });
       win.R1StorageProbeResult = sum; // for desktop walks
@@ -216,5 +217,5 @@
     render();
   }
   if (typeof window !== 'undefined' && typeof document !== 'undefined' && !window.__R1_PROBE_NO_AUTOBOOT) boot(window, document);
-  return { create, snapshot, words, KEYS };
+  return { create, snapshot, words, KEYS, REV };
 });
